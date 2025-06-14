@@ -1,61 +1,51 @@
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 import time
 import json
 
-# Set your actual _forum_session cookie here
-forum_session_cookie = "REPLACE_THIS_WITH_YOUR_COOKIE"
+DISCUSSION_URL = "https://discourse.onlinedegree.iitm.ac.in/c/courses/tds-kb/34"
 
-# Set up Selenium Chrome driver
 options = Options()
-options.add_argument("--start-maximized")
+options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")  # Connect to running Chrome
 
-service = Service()
-driver = webdriver.Chrome(service=service, options=options)
+driver = webdriver.Chrome(options=options)
 
-# Open the Discourse forum (not JSON endpoint)
-url = "https://discourse.onlinedegree.iitm.ac.in/c/courses/tds-kb/34"
-driver.get(url)
-time.sleep(3)  # Wait for initial page load
+# Navigate to the page
+driver.get(DISCUSSION_URL)
+time.sleep(5)
 
-# Inject the forum_session cookie to simulate login
-driver.add_cookie({
-    "name": "_forum_session",
-    "value": forum_session_cookie,
-    "domain": "discourse.onlinedegree.iitm.ac.in",
-    "path": "/"
-})
+# Scroll to load content
+SCROLL_PAUSE = 2
+last_height = driver.execute_script("return document.body.scrollHeight")
+while True:
+    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+    time.sleep(SCROLL_PAUSE)
+    new_height = driver.execute_script("return document.body.scrollHeight")
+    if new_height == last_height:
+        break
+    last_height = new_height
 
-# Refresh to apply cookie and view logged-in content
-driver.refresh()
-time.sleep(5)  # Wait for dynamic content to load
+# Get topic links
+topics = driver.find_elements(By.CSS_SELECTOR, "a.title")
+topic_links = list(set([t.get_attribute("href") for t in topics if "/t/" in t.get_attribute("href")]))
+print(f"🔗 Found {len(topic_links)} topic links")
 
-# Debug: Print all <a> tags (first 20 only)
-a_tags = driver.find_elements(By.TAG_NAME, "a")
-print(f"🔎 Found {len(a_tags)} <a> tags")
-for a in a_tags[:20]:
-    print("→", a.text.strip(), "|", a.get_attribute("href"))
+# Scrape content
+data = []
+for link in topic_links:
+    driver.get(link)
+    time.sleep(3)
+    try:
+        title = driver.find_element(By.CSS_SELECTOR, "h1").text
+        posts = driver.find_elements(By.CSS_SELECTOR, ".cooked")
+        content = "\n\n".join([p.text for p in posts])
+        data.append({"title": title, "content": content})
+    except Exception as e:
+        print(f"❌ Error on {link}: {e}")
 
-# Try to find post titles (discourse style)
-posts = []
-title_links = driver.find_elements(By.CSS_SELECTOR, "a.title")
-
-for link in title_links:
-    title = link.text.strip()
-    href = link.get_attribute("href")
-    if title and href:
-        posts.append({
-            "title": title,
-            "url": href
-        })
-
-# Save to JSON
 with open("discourse_posts.json", "w", encoding="utf-8") as f:
-    json.dump(posts, f, indent=2)
+    json.dump(data, f, indent=2, ensure_ascii=False)
 
-print(f"✅ Saved {len(posts)} posts to 'discourse_posts.json'")
-
-# Cleanup
 driver.quit()
+print(f"✅ Scraped {len(data)} posts into discourse_posts.json")
